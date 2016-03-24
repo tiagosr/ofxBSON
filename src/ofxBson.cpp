@@ -1,6 +1,9 @@
 #include "ofxBson.h"
 
 using namespace _bson;
+
+ofBuffer ofxBson::BSONNode::emptyBuffer;
+
 void ofxBson::serialize(const ofAbstractParameter & parameter) {
 	if (!parameter.isSerializable()) {
 		return;
@@ -76,7 +79,7 @@ bool ofxBson::load(const string & path) {
 bool ofxBson::save(const string & path) {
 	ofFile toSave(path, ofFile::Mode::WriteOnly, true);
 	bsonobjbuilder b;
-	root->constructInBuilder(b);
+	root->getObject()->constructInBuilder(b);
 	ofBuffer buf = ofBuffer(b.obj().objdata(), b.obj().objsize());
 	toSave.writeFromBuffer(buf);
 	toSave.close();
@@ -85,17 +88,46 @@ bool ofxBson::save(const string & path) {
 
 
 bool ofxBson::exists(const string & name) const {
-	return current->exists(name);
+	return current->getObject()->exists(name);
+}
+
+bool ofxBson::exists(size_t index) const {
+	return !!current->getArray()->getAt(index);
 }
 
 void ofxBson::addChild(const string& name) {
-	current->addChild(name);
+	current->getObject()->addChild(name);
+}
+
+size_t ofxBson::addChildToArray() {
+	return current->getArray()->push(make_shared<BSONObjNode>(current));
+}
+
+void ofxBson::addArray(const string & name) {
+	return current->getObject()->addArray(name);
+}
+
+size_t ofxBson::addArrayToArray() {
+	return current->getArray()->push(make_shared<BSONArrayNode>(current));
 }
 
 bool ofxBson::setTo(const string & name) {
-	auto p = current->getChild(name)->getObject();
+	auto o = current->getObject();
+	if (!o) return false;
+	auto p = o->getChild(name)->getObject();
 	if (p) {
 		current = p;
+		return true;
+	}
+	return false;
+}
+
+bool ofxBson::setTo(size_t index) {
+	auto o = current->getArray();
+	if (!o) return false;
+	auto i = o->getAt(index);
+	if (i) {
+		current = i;
 		return true;
 	}
 	return false;
@@ -108,14 +140,57 @@ void ofxBson::setToParent() {
 	}
 }
 void ofxBson::setValue(const string & name, const string & value) {
-	current->addString(name, value);
+	current->getObject()->addString(name, value);
+}
+size_t ofxBson::pushValue(const string & value) {
+	return current->getArray()->pushString(value);
 }
 void ofxBson::setValue(const string & name, double value) {
-	current->addNumber(name, value);
+	current->getObject()->addNumber(name, value);
+}
+
+size_t ofxBson::pushValue(double value) {
+	return current->getArray()->pushNumber(value);
 }
 
 void ofxBson::setValue(const string & name, bool value) {
-	current->addBool(name, value);
+	current->getObject()->addBool(name, value);
+}
+
+size_t ofxBson::pushValue(bool value) {
+	return current->getArray()->pushBool(value);
+}
+
+void ofxBson::setValue(const string & name, int32_t value) {
+	return current->getObject()->addInt32(name, value);
+}
+
+void ofxBson::setValue(const string & name, int64_t value) {
+	return current->getObject()->addInt64(name, value);
+}
+
+void ofxBson::setNull(const string & name) {
+	return current->getObject()->addNull(name);
+}
+
+size_t ofxBson::pushNull() {
+	return current->getArray()->pushNull();
+}
+
+size_t ofxBson::pushObject() {
+	return current->getArray()->pushNewObject();
+}
+
+size_t ofxBson::pushArray() {
+	return current->getArray()->pushNewArray();
+}
+
+void ofxBson::setBuffer(const string & name, const ofBuffer & value) {
+	current->getObject()->addBuffer(name, value);
+}
+
+size_t ofxBson::getSize() const {
+	return current->getArray()->length();
 }
 
 ofxBson::BSONObjNode::BSONObjNode(const _bson::bsonobj & obj,  weak_ptr<BSONNode> _parent):
@@ -187,21 +262,21 @@ inline bsonobj ofxBson::BSONObjNode::obj() const {
 }
 
 int ofxBson::getIntValue(const string & name) const {
-	return current->getNumber(name);
+	return current->getObject()->getNumber(name);
 }
 
 float ofxBson::getFloatValue(const string & name) const {
-	return current->getNumber(name);
+	return current->getObject()->getNumber(name);
 }
 
 double ofxBson::getDoubleValue(const string & name) const {
-	return current->getNumber(name);
+	return current->getObject()->getNumber(name);
 }
 
 bool ofxBson::getBoolValue(const string & name) const {
-	return current->getBool(name);
+	return current->getObject()->getBool(name);
 }
 
 string ofxBson::getValue(const string & name) const {
-	return current->getString(name);
+	return current->getObject()->getString(name);
 }
