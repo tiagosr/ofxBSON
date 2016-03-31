@@ -8,11 +8,15 @@ class ofxBson: public ofBaseFileSerializer {
 protected:
 	class BSONArrayNode;
 	class BSONObjNode;
+	class BSONGUIDNode;
+	class BSONObjWithGUIDNode;
 	class BSONNode {
 	public:
+		ofxBson* bson;
 		static ofBuffer emptyBuffer;
 		weak_ptr<BSONNode> parent;
-		BSONNode(weak_ptr<BSONNode> parent = weak_ptr<BSONNode>()) : parent(parent) {}
+		weak_ptr<BSONNode> tempParent;
+		BSONNode(weak_ptr<BSONNode> parent = weak_ptr<BSONNode>(), ofxBson *bson = 0) : parent(parent), bson(bson) {}
 		virtual ~BSONNode() {}
 		virtual bool isObject() const { return false; }
 		virtual bool isArray() const { return false; }
@@ -24,6 +28,10 @@ protected:
 		virtual bool isBool() const { return false; }
 		virtual bool isNull() const { return false; }
 		virtual bool isUndefined() const { return false; }
+		virtual bool isGUID() const { return false; }
+		virtual bool isBuilt() const { return false; }
+		virtual bool isObjectInstance() const { return isGUID(); }
+
 
 		virtual string getString() const { return ""; }
 		virtual double getNumber() const { return numeric_limits<double>::signaling_NaN(); }
@@ -33,8 +41,14 @@ protected:
 		virtual const ofBuffer& getBuffer() const { return emptyBuffer; }
 		virtual shared_ptr<BSONArrayNode> getArray() { return shared_ptr<BSONArrayNode>(); }
 		virtual shared_ptr<BSONObjNode> getObject() { return shared_ptr<BSONObjNode>(); }
-		weak_ptr<BSONNode> getParent() const {
-			return parent;
+		virtual string getGUID() const { return ""; }
+		weak_ptr<BSONNode> getParent() {
+			if (tempParent.expired()) {
+				return parent;
+			}
+			weak_ptr<BSONNode> tempTempParent;
+			tempTempParent.swap(tempParent);
+			return tempTempParent;
 		}
 	};
 
@@ -111,11 +125,13 @@ protected:
 		const ofBuffer& getBuffer() const { return buf; }
 	};
 
+	
+
 	class BSONArrayNode : public BSONNode, public enable_shared_from_this<BSONArrayNode> {
 	protected:
 		vector<shared_ptr<BSONNode>> items;
 	public:
-		BSONArrayNode(weak_ptr<BSONNode> parent = weak_ptr<BSONNode>()):BSONNode(parent) {}
+		BSONArrayNode(weak_ptr<BSONNode> parent = weak_ptr<BSONNode>(), ofxBson *bson = 0):BSONNode(parent, bson) {}
 		bool isArray() const { return true; }
 		shared_ptr<BSONArrayNode> getArray() { return shared_from_this(); }
 		void constructInBuilder(_bson::bsonobjbuilder &builder) {
@@ -143,6 +159,8 @@ protected:
 					_bson::bsonobjbuilder b(builder.subobjStart(ofToString(c)));
 					item->getObject()->constructInBuilder(b);
 					b._done();
+				} else if (item->isGUID()) {
+					builder.append(ofToString(c), _bson::OID(item->getGUID()));
 				}
 				c++;
 			}
@@ -187,105 +205,178 @@ protected:
 		size_t pushBuffer(const ofBuffer& buf) {
 			return push(make_shared<BSONBufferNode>(buf, shared_from_this()));
 		}
+		size_t pushGUIDObject(const string& guid, bool& already_in_store);
 	};
 	class BSONObjNode: public BSONNode, public enable_shared_from_this<BSONObjNode> {
 	protected:
 		map<string, shared_ptr<BSONNode>> content;
+		string type;
 	public:
 		BSONObjNode() {}
-		BSONObjNode(weak_ptr<BSONNode> parent): BSONNode(parent) {}
+		BSONObjNode(weak_ptr<BSONNode> parent, ofxBson *bson = 0): BSONNode(parent, bson) {}
 		BSONObjNode(const _bson::bsonobj& obj, weak_ptr<BSONNode> _parent = weak_ptr<BSONNode>());
-		void addChild(const string& name) {
-			content[name] = make_shared<BSONObjNode>(shared_from_this());
+		virtual void addChild(const string& name) {
+			content[name] = make_shared<BSONObjNode>(shared_from_this(), bson);
 		}
-		void addNull(const string& name) {
+		virtual void addNull(const string& name) {
 			content[name] = make_shared<BSONNullNode>(shared_from_this());
 		}
-		void addString(const string& name, const string& value) {
+		virtual void addString(const string& name, const string& value) {
 			content[name] = make_shared<BSONStringNode>(value, shared_from_this());
 		}
-		void addNumber(const string& name, double value) {
+		virtual void addNumber(const string& name, double value) {
 			content[name] = make_shared<BSONNumberNode>(value, shared_from_this());
 		}
-		void addInt32(const string& name, int32_t value) {
+		virtual void addInt32(const string& name, int32_t value) {
 			content[name] = make_shared<BSONInt32Node>(value, shared_from_this());
 		}
-		void addInt64(const string& name, int64_t value) {
+		virtual void addInt64(const string& name, int64_t value) {
 			content[name] = make_shared<BSONInt64Node>(value, shared_from_this());
 		}
-		void addBool(const string& name, bool value) {
+		virtual void addBool(const string& name, bool value) {
 			content[name] = make_shared<BSONBoolNode>(value, shared_from_this());
 		}
-		void addBuffer(const string& name, const ofBuffer& buf) {
+		virtual void addBuffer(const string& name, const ofBuffer& buf) {
 			content[name] = make_shared<BSONBufferNode>(buf, shared_from_this());
 		}
-		void addArray(const string& name) {
-			content[name] = make_shared<BSONArrayNode>(shared_from_this());
+		virtual void addArray(const string& name) {
+			content[name] = make_shared<BSONArrayNode>(shared_from_this(), bson);
 		}
-		bool exists(const string& name) const;
-		shared_ptr<BSONNode> getChild(const string& name) const {
+
+		virtual void addGUIDObject(const string& name, const string& guid, const string& type, bool& already_in_store);
+
+		virtual bool exists(const string& name) const;
+		virtual shared_ptr<BSONNode> getChild(const string& name) const {
 			return content.find(name)->second;
 		}
-		shared_ptr<BSONObjNode> getObject() {
+		virtual shared_ptr<BSONObjNode> getObject() {
 			return shared_from_this();
 		}
-		double getNumber(const string& name) const {
+		virtual double getNumber(const string& name) const {
 			return getChild(name)->getNumber();
 		}
-		int32_t getInt32(const string& name) const {
+		virtual int32_t getInt32(const string& name) const {
 			return getChild(name)->getInt32();
 		}
-		int64_t getInt64(const string& name) const {
+		virtual int64_t getInt64(const string& name) const {
 			return getChild(name)->getInt64();
 		}
-		const ofBuffer& getBuffer(const string& name) const {
+		virtual const ofBuffer& getBuffer(const string& name) const {
 			return getChild(name)->getBuffer();
 		}
-		bool getBool(const string& name) const {
+		virtual bool getBool(const string& name) const {
 			return getChild(name)->getBool();
 		}
-		string getString(const string& name) const {
+		virtual string getString(const string& name) const {
 			return getChild(name)->getString();
 		}
-		shared_ptr<BSONArrayNode> getArray(const string& name) const {
+		virtual shared_ptr<BSONArrayNode> getArray(const string& name) const {
 			return getChild(name)->getArray();
 		}
+		virtual string getGUID(const string& name) const {
+			return getChild(name)->getGUID();
+		}
 		
-		bool isChild(const string& name) const {
+		virtual bool isChild(const string& name) const {
 			return (content.find(name) != content.cend());
 		}
-		bool isNull(const string& name) const {
+		virtual bool isNull(const string& name) const {
 			return isChild(name) && getChild(name)->isNull();
 		}
-		bool isBool(const string& name) const {
+		virtual bool isBool(const string& name) const {
 			return isChild(name) && getChild(name)->isBool();
 		}
-		bool isNumber(const string& name) const {
+		virtual bool isNumber(const string& name) const {
 			return isChild(name) && getChild(name)->isNumber();
 		}
-		bool isInt32(const string& name) const {
+		virtual bool isInt32(const string& name) const {
 			return isChild(name) && getChild(name)->isInt32();
 		}
-		bool isInt64(const string& name) const {
+		virtual bool isInt64(const string& name) const {
 			return isChild(name) && getChild(name)->isInt64();
 		}
-		bool isBuffer(const string& name) const {
+		virtual bool isBuffer(const string& name) const {
 			return isChild(name) && getChild(name)->isBuffer();
 		}
-		bool isString(const string& name) const {
+		virtual bool isString(const string& name) const {
 			return isChild(name) && getChild(name)->isString();;
 		}
-		bool isObject(const string& name) const {
+		virtual bool isObject(const string& name) const {
 			return isChild(name) && getChild(name)->isObject();
 		}
-		bool isArray(const string& name) const {
+		virtual bool isArray(const string& name) const {
 			return isChild(name) && getChild(name)->isArray();
 		}
-		void constructInBuilder(_bson::bsonobjbuilder& b) const;
+		virtual bool isGUID(const string& name) const {
+			return isChild(name) && getChild(name)->isGUID();
+		}
+		
+		virtual void constructInBuilder(_bson::bsonobjbuilder &b) const;
 		_bson::bsonobj obj() const;
 	};
+
+	class BSONObjWithGUIDNode : public BSONObjNode {
+	public:
+		string guid;
+		string type;
+		shared_ptr<void> constructedObject;
+		shared_ptr<void> construct(ofxBson& b);
+		BSONObjWithGUIDNode(const string& guid, const string& type, weak_ptr<BSONNode> parent, ofxBson *bson):
+			BSONObjNode(parent, bson), guid(guid), type(type) {}
+		void constructInBuilder(_bson::bsonobjbuilder &b) const;
+		bool isGUID() const { return true; }
+		string getGUID() const { return guid; }
+	};
+public:
+	typedef function<shared_ptr<void>(ofxBson&)> constructor_fn;
+protected:
+	class BSONGUIDNode : public BSONObjNode {
+	public:
+		shared_ptr<BSONObjWithGUIDNode> reference;
+		BSONGUIDNode(const string& guid, const string& type, weak_ptr<BSONNode> parent = weak_ptr<BSONNode>(), ofxBson *bson = 0):
+			BSONObjNode(parent, bson) {
+			auto found = bson->storedObjects.find(guid);
+			if (found == bson->storedObjects.cend()) {
+				bson->storedObjects[guid] = make_shared<BSONObjWithGUIDNode>(guid, type, parent, bson);
+			} else {
+				reference = found->second;
+			}
+		}
+		shared_ptr<BSONObjNode> getObject() const;
+		shared_ptr<void> getConstructedObject(ofxBson& b) const;
+		virtual void addChild(const string& name) { reference->addChild(name); }
+		virtual void addNull(const string& name) { reference->addNull(name); }
+		virtual void addString(const string& name, const string& value) { reference->addString(name, value); }
+		virtual void addNumber(const string& name, double value) { reference->addNumber(name, value); }
+		virtual void addInt32(const string& name, int32_t value) { reference->addInt32(name, value); }
+		virtual void addInt64(const string& name, int64_t value) { reference->addInt64(name, value); }
+		virtual void addBool(const string& name, bool value) { reference->addBool(name, value); }
+		virtual void addBuffer(const string& name, const ofBuffer& buf) { reference->addBuffer(name, buf); }
+		virtual void addArray(const string& name) { reference->addArray(name); }
+
+		virtual void addGUIDObject(const string& name, const string& guid, const string& type, bool& already_in_store) {
+			reference->addGUIDObject(name, guid, type, already_in_store);
+		}
+
+		virtual bool exists(const string& name) const {
+			return reference->exists(name);
+		}
+		virtual shared_ptr<BSONNode> getChild(const string& name) const {
+			return reference->getChild(name);
+		}
+		virtual shared_ptr<BSONObjNode> getObject() {
+			return shared_from_this();
+		}
+		virtual bool isChild(const string& name) const {
+			return reference->isChild(name);
+		}
+	};
+
+	map<string, constructor_fn> constructors;
+	map<string, shared_ptr<BSONObjWithGUIDNode>> storedObjects;
 	shared_ptr<BSONNode> root;
 	shared_ptr<BSONNode> current;
+	friend class BSONObjWithGUIDNode;
 
 public:
 	ofxBson(): root(make_shared<BSONObjNode>()), current(root) {}
@@ -316,6 +407,11 @@ public:
 	void setBuffer(const string& name, const ofBuffer& value);
 	size_t pushBuffer(const ofBuffer& buf);
 
+	void setGUIDObject(const string& name, const string& guid, bool& already_in_store);
+	void setGUIDObject(const string& name, const string& guid, const string& type, bool& already_in_store);
+	size_t pushGUIDObject(const string& guid, bool& already_in_store);
+	size_t pushGUIDObject(const string& guid, const string& type, bool& already_in_store);
+
 	size_t getSize() const;
 
 	int getIntValue(const string& name) const;
@@ -330,6 +426,27 @@ public:
 	bool getBoolValue(size_t index) const;
 	string getValue(const string& name) const;
 	string getValue(size_t index) const;
+
+	string getGUID(const string& name) const;
+	string getGUID(size_t index) const;
+
+	void setConstructor(const string& type_name, constructor_fn fn) {
+		constructors[type_name] = fn;
+	}
+	
+	
+	template <typename T>
+	shared_ptr<T> getConstructedObjectByGUID(const string& guid) {
+		auto found = storedObjects.find(guid);
+		if (found != storedObjects.cend()) {
+			if (!found->second->constructedObject) {
+				return static_pointer_cast<T>(found->second->construct(*this));
+			}
+			return static_pointer_cast<T>(found->second->constructedObject);
+		}
+		return shared_ptr<T>();
+	}
+
 
 	virtual void serialize(const ofAbstractParameter & parameter) override;
 	virtual void deserialize(ofAbstractParameter & parameter) override;

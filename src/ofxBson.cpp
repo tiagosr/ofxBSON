@@ -189,6 +189,18 @@ void ofxBson::setBuffer(const string & name, const ofBuffer & value) {
 	current->getObject()->addBuffer(name, value);
 }
 
+void ofxBson::setGUIDObject(const string & name, const string & guid, bool & already_in_store) {
+	current->getObject()->addGUIDObject(name, guid, "", already_in_store);
+}
+
+void ofxBson::setGUIDObject(const string & name, const string & guid, const string & type, bool & already_in_store) {
+	current->getObject()->addGUIDObject(name, guid, type, already_in_store);
+}
+
+size_t ofxBson::pushGUIDObject(const string & guid, bool & already_in_store) {
+	return current->getArray()->pushGUIDObject(guid, already_in_store);
+}
+
 size_t ofxBson::getSize() const {
 	return current->getArray()->length();
 }
@@ -218,6 +230,11 @@ ofxBson::BSONObjNode::BSONObjNode(const _bson::bsonobj & obj,  weak_ptr<BSONNode
 	}
 }
 
+void ofxBson::BSONObjNode::addGUIDObject(const string & name, const string & guid, const string& type, bool & already_in_store) {
+	already_in_store = (bson->storedObjects.find(guid) != bson->storedObjects.cend());
+	content[name] = make_shared<BSONGUIDNode>(guid, type, shared_ptr<BSONNode>(this), bson);
+}
+
 inline bool ofxBson::BSONObjNode::exists(const string & name) const {
 	return (content.find(name) != content.cend());
 }
@@ -234,7 +251,6 @@ inline void ofxBson::BSONObjNode::constructInBuilder(bsonobjbuilder & b) const {
 		} else if (item.second->isArray()) {
 			if (item.second->getArray()) {
 				string name = item.first;
-				//bsonarraybuilder arr = b.subarrayStart(name);
 				bsonobjbuilder arr(b.subarrayStart(name));
 				item.second->getArray()->constructInBuilder(arr);
 				arr.done();
@@ -247,6 +263,8 @@ inline void ofxBson::BSONObjNode::constructInBuilder(bsonobjbuilder & b) const {
 			b.appendNumber(item.first, item.second->getNumber());
 		} else if (item.second->isString()) {
 			b.append(item.first, item.second->getString());
+		} else if (item.second->isGUID()) {
+			b.append(item.first, _bson::OID(item.second->getGUID()));
 		}
 	}
 	b.done();
@@ -279,4 +297,50 @@ bool ofxBson::getBoolValue(const string & name) const {
 
 string ofxBson::getValue(const string & name) const {
 	return current->getObject()->getString(name);
+}
+
+string ofxBson::getGUID(const string & name) const {
+	return current->getObject()->getChild(name)->getGUID();
+}
+
+string ofxBson::getGUID(size_t index) const {
+	return current->getArray()->getAt(index)->getGUID();
+}
+
+
+
+size_t ofxBson::BSONArrayNode::pushGUIDObject(const string & guid, bool &already_in_store) {
+	already_in_store = (bson->storedObjects.find(guid) != bson->storedObjects.cend());
+	return push(make_shared<BSONGUIDNode>(guid, "", shared_ptr<BSONNode>(this), bson));
+}
+
+shared_ptr<ofxBson::BSONObjNode> ofxBson::BSONGUIDNode::getObject() const {
+	return reference;
+}
+
+shared_ptr<void> ofxBson::BSONGUIDNode::getConstructedObject(ofxBson& b) const {
+	if (reference) {
+		return reference->construct(b);
+	} else {
+		return shared_ptr<void>();
+	}
+}
+
+shared_ptr<void> ofxBson::BSONObjWithGUIDNode::construct(ofxBson & b) {
+	if (!constructedObject) {
+		auto cons = b.constructors.find(type);
+		if (cons != b.constructors.cend()) {
+			constructedObject = cons->second(b);
+			return constructedObject;
+		}
+		return shared_ptr<void>();
+	} else {
+		return constructedObject;
+	}
+}
+
+void ofxBson::BSONObjWithGUIDNode::constructInBuilder(_bson::bsonobjbuilder & b) const {
+	b.append("%guid", _bson::OID(guid));
+	b.append("%type", type);
+	ofxBson::BSONObjNode::constructInBuilder(b);
 }
