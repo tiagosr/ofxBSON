@@ -323,6 +323,7 @@ protected:
 		shared_ptr<void> construct(ofxBson& b);
 		BSONObjWithGUIDNode(const string& guid, const string& type, weak_ptr<BSONNode> parent, ofxBson *bson):
 			BSONObjNode(parent, bson), guid(guid), type(type) {}
+		BSONObjWithGUIDNode(const _bson::bsonobj & obj, weak_ptr<BSONNode> parent);
 		void constructInBuilder(_bson::bsonobjbuilder &b) const;
 		bool isGUID() const { return true; }
 		string getGUID() const { return guid; }
@@ -333,14 +334,19 @@ protected:
 	class BSONGUIDNode : public BSONObjNode {
 	public:
 		shared_ptr<BSONObjWithGUIDNode> reference;
+
 		BSONGUIDNode(const string& guid, const string& type, weak_ptr<BSONNode> parent = weak_ptr<BSONNode>(), ofxBson *bson = 0):
 			BSONObjNode(parent, bson) {
 			auto found = bson->storedObjects.find(guid);
 			if (found == bson->storedObjects.cend()) {
-				bson->storedObjects[guid] = make_shared<BSONObjWithGUIDNode>(guid, type, parent, bson);
+			//	bson->storedObjects[guid] = make_shared<BSONObjWithGUIDNode>(guid, type, parent, bson);
 			} else {
 				reference = found->second;
 			}
+		}
+		BSONGUIDNode(const string& guid, weak_ptr<BSONNode> parent = weak_ptr<BSONNode>()):
+			BSONObjNode(parent, bson) {
+			
 		}
 		shared_ptr<BSONObjNode> getObject() const;
 		shared_ptr<void> getConstructedObject(ofxBson& b) const;

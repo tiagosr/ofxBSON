@@ -1,4 +1,7 @@
 #include "ofxBson.h"
+#include <boost/uuid/uuid.hpp>
+#include <boost/uuid/uuid_io.hpp>
+#include <boost/lexical_cast.hpp>
 
 using namespace _bson;
 
@@ -222,10 +225,41 @@ ofxBson::BSONObjNode::BSONObjNode(const _bson::bsonobj & obj,  weak_ptr<BSONNode
 			addNumber(name,elem.number());
 		}
 		else if (elem.isObject()) {
-			content[name] = make_shared<BSONObjNode>(elem.object());
+			auto i_obj = elem.object();
+			if (i_obj.hasField("%type")) {
+				content[name] = make_shared<BSONObjWithGUIDNode>(i_obj, shared_from_this());
+			} else {
+				content[name] = make_shared<BSONObjNode>(elem.object(), shared_from_this());
+			}
 		}
 		else {
-			addString(name, elem.String());
+			switch (elem.type()) {
+			case BSONType::BinData:
+				{
+					int len = 0;
+					auto chstr = elem.binData(len);
+					switch (elem.binDataType()) {
+					case BinDataType::newUUID:
+						boost::uuids::uuid uid;
+						memcpy(uid.data, chstr, 16);
+						content[name] = make_shared<BSONGUIDNode>(boost::lexical_cast<string>(uid), shared_from_this());
+						break;
+					case BinDataType::BinDataGeneral:
+					{
+						ofBuffer buf(chstr, len);
+						content[name] = make_shared<BSONBufferNode>(buf, shared_from_this());
+					}
+						break;
+					default:
+						addString(name, elem.String());
+					}
+				}
+			break;
+			case BSONType::jstOID:
+				content[name] = make_shared<BSONGUIDNode>(elem.__oid().str(), shared_from_this());
+				break;
+			}
+			
 		}
 	}
 }
@@ -264,7 +298,9 @@ inline void ofxBson::BSONObjNode::constructInBuilder(bsonobjbuilder & b) const {
 		} else if (item.second->isString()) {
 			b.append(item.first, item.second->getString());
 		} else if (item.second->isGUID()) {
-			b.append(item.first, _bson::OID(item.second->getGUID()));
+			boost::uuids::uuid uid = boost::lexical_cast<boost::uuids::uuid>(item.second->getGUID());
+			
+			b.appendBinData(item.first, uid.size(), BinDataType::newUUID, uid.data);
 		}
 	}
 	b.done();
@@ -337,6 +373,13 @@ shared_ptr<void> ofxBson::BSONObjWithGUIDNode::construct(ofxBson & b) {
 	} else {
 		return constructedObject;
 	}
+}
+
+ofxBson::BSONObjWithGUIDNode::BSONObjWithGUIDNode(const _bson::bsonobj & obj, weak_ptr<BSONNode> parent): BSONObjNode(obj, parent) {
+	int len = 0;
+	auto guid_c = obj.getField("%guid").binData(len);
+	guid = string(guid_c, len);
+	type = obj.getStringField("%type");
 }
 
 void ofxBson::BSONObjWithGUIDNode::constructInBuilder(_bson::bsonobjbuilder & b) const {

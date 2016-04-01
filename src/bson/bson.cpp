@@ -8,6 +8,7 @@ using namespace std;
 
 namespace _bson {
 
+	
     namespace iter {
         // values herein represent size of the element of the corresponding type.
         // if >= 0x80, size is in the next dword + the value herein & 0x7f
@@ -417,6 +418,21 @@ namespace _bson {
 
         return e;
     }
+
+	int bsonobj::getIntField(const StringData& name) const {
+		bsonelement e = getField(name);
+		return e.isNumber() ? (int)e.number() : std::numeric_limits<int>::min();
+	}
+
+	bool bsonobj::getBoolField(const StringData& name) const {
+		bsonelement e = getField(name);
+		return e.type() == Bool ? e.boolean() : false;
+	}
+	
+	const char * bsonobj::getStringField(const StringData & name) const {
+		bsonelement e = getField(name);
+		return e.type() == String ? e.valuestr() : "";
+	}
 
     void bsonobj::toString(StringBuilder& s, bool isArray, bool full, int depth) const {
         if (isEmpty()) {
